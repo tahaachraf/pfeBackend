@@ -76,7 +76,7 @@ exports.createUser = async (req, res) => {
     const newUser = new Utilisateur({
       nom, prenom, email,
       motDePasse: hashedPassword,
-      role: role || "internaute",
+      role: role || "client",   // ✅ CORRIGÉ : "client" au lieu de "internaute"
       statut: "enCours",
       verificationToken,
       verificationTokenExpires

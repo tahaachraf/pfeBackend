@@ -4,36 +4,57 @@ const express = require("express");
 const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
 const path = require("path");
+const Stripe = require("stripe");
+
 require("dotenv").config();
 
 const app = express();
 
 // =========================
-// CORS — autorise le frontend sur port 5173
+// Initialisation Stripe
+// =========================
+const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
+
+// =========================
+// CORS
 // =========================
 app.use((req, res, next) => {
   res.header("Access-Control-Allow-Origin", "*");
   res.header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
   res.header("Access-Control-Allow-Headers", "Content-Type,Authorization");
-  if (req.method === "OPTIONS") return res.sendStatus(200);
+
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(200);
+  }
+
   next();
 });
 
+// =========================
 // Middleware
+// =========================
 app.use(express.json());
 
 // =========================
-// Fichiers statiques (images & PDFs)
+// Fichiers statiques
 // =========================
-app.use("/api/uploads", express.static(path.join(__dirname, "uploads/images")));
-app.use("/api/pieces-jointes-files", express.static(path.join(__dirname, "uploads/pieces_jointes")));
+app.use(
+  "/api/uploads",
+  express.static(path.join(__dirname, "uploads/images"))
+);
+
+app.use(
+  "/api/pieces-jointes-files",
+  express.static(path.join(__dirname, "uploads/pieces_jointes"))
+);
 
 // =========================
 // Connexion MongoDB
 // =========================
-mongoose.connect(process.env.MONGO_URI)
+mongoose
+  .connect(process.env.MONGO_URI)
   .then(() => console.log("MongoDB connecté ✅"))
-  .catch(err => console.error("Erreur MongoDB ❌", err));
+  .catch((err) => console.error("Erreur MongoDB ❌", err));
 
 // =========================
 // Route de connexion
@@ -43,47 +64,63 @@ const Utilisateur = require("./models/utilisateurs.model");
 app.post("/api/auth/login", async (req, res) => {
   try {
     const { email, motDePasse, password, role } = req.body;
+
     const mdp = motDePasse || password;
 
     if (!email || !mdp) {
-      return res.status(400).json({ message: "Email et mot de passe requis" });
+      return res.status(400).json({
+        message: "Email et mot de passe requis",
+      });
     }
 
     const user = await Utilisateur.findOne({ email });
+
     if (!user) {
-      return res.status(401).json({ message: "Email incorrect" });
+      return res.status(401).json({
+        message: "Email incorrect",
+      });
     }
 
     const isMatch = await bcrypt.compare(mdp, user.motDePasse);
+
     if (!isMatch) {
-      return res.status(401).json({ message: "Mot de passe incorrect" });
+      return res.status(401).json({
+        message: "Mot de passe incorrect",
+      });
     }
 
-    // Si "enCours" ET token expiré → passer à "bloque" automatiquement
-    if (user.statut === "enCours" && user.verificationTokenExpires && user.verificationTokenExpires < new Date()) {
+    if (
+      user.statut === "enCours" &&
+      user.verificationTokenExpires &&
+      user.verificationTokenExpires < new Date()
+    ) {
       user.statut = "bloque";
       user.verificationToken = undefined;
       user.verificationTokenExpires = undefined;
+
       await user.save();
-      console.log(`🔒 Compte expiré et bloqué : ${user.email}`);
+
+      console.log(`🔒 Compte expiré : ${user.email}`);
     }
 
     if (user.statut === "enCours") {
       return res.status(403).json({
-        message: "Votre compte est en cours de validation. Vérifiez votre email et cliquez sur le lien de validation.",
-        statut: "enCours"
+        message: "Votre compte est en cours de validation.",
+        statut: "enCours",
       });
     }
 
     if (user.statut === "bloque") {
       return res.status(403).json({
-        message: "Votre compte a été bloqué car le délai de validation est dépassé. Veuillez vous réinscrire.",
-        statut: "bloque"
+        message: "Votre compte est bloqué.",
+        statut: "bloque",
       });
     }
 
     if (role && user.role !== role) {
-      return res.status(403).json({ message: "Accès refusé : rôle insuffisant" });
+      return res.status(403).json({
+        message: "Accès refusé",
+      });
     }
 
     res.json({
@@ -92,12 +129,54 @@ app.post("/api/auth/login", async (req, res) => {
       prenom: user.prenom,
       email: user.email,
       role: user.role,
-      statut: user.statut
+      statut: user.statut,
     });
 
   } catch (err) {
     console.error("Erreur login:", err);
     res.status(500).json({ message: "Erreur serveur" });
+  }
+});
+
+// =========================
+// STRIPE — Checkout Session
+// =========================
+app.post("/api/create-payment-intent", async (req, res) => {
+  try {
+    const { commandeId, amount, successUrl, cancelUrl } = req.body;
+
+    if (!amount || !successUrl || !cancelUrl) {
+      return res.status(400).json({ message: "Paramètres manquants" });
+    }
+
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ["card"],
+      mode: "payment",
+      line_items: [
+        {
+          price_data: {
+            currency: "eur",
+            unit_amount: amount,
+            product_data: {
+              name: "Commande ShopTunisie",
+              description: commandeId ? `Commande #${commandeId}` : undefined,
+            },
+          },
+          quantity: 1,
+        },
+      ],
+      success_url: successUrl,
+      cancel_url: cancelUrl,
+      metadata: {
+        commandeId: commandeId || "",
+      },
+    });
+
+    res.json({ url: session.url });
+
+  } catch (error) {
+    console.error("Erreur Stripe :", error);
+    res.status(500).json({ error: error.message });
   }
 });
 
@@ -144,28 +223,32 @@ app.get("/", (req, res) => {
 });
 
 // =========================
-// Tâche automatique : expiration des comptes "enCours"
-// Toutes les 10 minutes → statut "bloque" si délai dépassé
+// Tâche automatique
 // =========================
 setInterval(async () => {
   try {
     const result = await Utilisateur.updateMany(
       {
         statut: "enCours",
-        verificationTokenExpires: { $lt: new Date() }
+        verificationTokenExpires: { $lt: new Date() },
       },
       {
         $set: { statut: "bloque" },
-        $unset: { verificationToken: "", verificationTokenExpires: "" }
+        $unset: {
+          verificationToken: "",
+          verificationTokenExpires: "",
+        },
       }
     );
+
     if (result.modifiedCount > 0) {
-      console.log(`🔒 ${result.modifiedCount} compte(s) bloqué(s) (délai dépassé)`);
+      console.log(`🔒 ${result.modifiedCount} compte(s) bloqué(s)`);
     }
+
   } catch (err) {
     console.error("Erreur tâche expiration :", err.message);
   }
-}, 10 * 60 * 1000); // toutes les 10 minutes
+}, 10 * 60 * 1000);
 
 // =========================
 // Lancement serveur
@@ -173,5 +256,5 @@ setInterval(async () => {
 const PORT = process.env.PORT || 3500;
 
 app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
+  console.log(`Server running on port ${PORT} 🚀`);
 });

@@ -11,6 +11,9 @@ module.exports={
         database: process.env.MYSQL_DATABASE,
         waitForConnections : true,
         connectionLimit: 10
+    },
+        stripe: {
+        secretKey: process.env.STRIPE_SECRET_KEY
     }
 
 }

@@ -3,7 +3,7 @@ const mongoose = require("mongoose");
 const paimentSchema = new mongoose.Schema({
   commandeId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: "Commandes", // Vérifie bien si c'est "Commandes" ou "Commande" dans le modèle commande
+    ref: "Commandes", 
     required: true
   },
   montant: {
