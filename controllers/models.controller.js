@@ -63,17 +63,21 @@ exports.create = async (req, res) => {
 
   try {
 
-    const { nom, marque, slug } = req.body;
+    const { nom, marque, idMarque, slug } = req.body;
+    const idMarqueFinal = marque || idMarque;
+
+    if (!idMarqueFinal) {
+      return res.status(400).json({ message: "La marque est obligatoire" });
+    }
 
     const exist = await Model.findOne({ slug });
-
     if (exist) {
       return res.status(400).json({ message: "Ce model existe déjà" });
     }
 
     const model = new Model({
       nom,
-      marque,
+      marque: idMarqueFinal,
       slug
     });
 

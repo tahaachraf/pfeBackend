@@ -5,13 +5,17 @@ const Produit = require("../models/produit.model");
 exports.creerProduit = async (req, res) => {
   try {
 
-    const produit = new Produit(req.body);
+    if (req.body.statutProduit === 'actif') req.body.statutProduit = 'Active';
+    if (req.body.statutProduit === 'inactif') req.body.statutProduit = 'NonActive';
 
+    const produit = new Produit(req.body);
+    console.log(Produit)
     const produitSauvegarde = await produit.save();
 
     res.status(201).json(produitSauvegarde);
 
   } catch (error) {
+    console.log(error)
     res.status(500).json({ message: error.message });
   }
 };
@@ -78,6 +82,9 @@ exports.getProduitBySlug = async (req, res) => {
 // UPDATE
 exports.updateProduit = async (req, res) => {
   try {
+
+    if (req.body.statutProduit === 'actif') req.body.statutProduit = 'Active';
+    if (req.body.statutProduit === 'inactif') req.body.statutProduit = 'NonActive';
 
     req.body.dateModification = Date.now();
 
